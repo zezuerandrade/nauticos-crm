@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NauticOS · Volvo Penta CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0B1F3A;font-family:'Barlow','Segoe UI',sans-serif;color:#E8F0FC}
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-track{background:#0B1F3A}
+    ::-webkit-scrollbar-thumb{background:#2575D044;border-radius:3px}
+    input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.6);cursor:pointer}
+    select option{background:#0B1F3A;color:#E8F0FC}
+    @keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @media(max-width:640px){
+      .sidebar{width:58px!important}
+      .sidebar .nav-label,.sidebar .logo-text,.sidebar .bk-label{display:none!important}
+      .main-content{margin-left:58px!important}
+    }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<div id="boot-error" style="display:none;position:fixed;inset:0;background:#0B1F3A;color:#E8F0FC;font-family:sans-serif;padding:40px;z-index:9999;overflow:auto;">
+  <h2 style="color:#F0C040;margin-bottom:16px;">⚠️ Erro ao carregar o NauticOS</h2>
+  <p style="color:#8BA3C1;margin-bottom:12px;">Detalhes técnicos do erro (envie um print disso):</p>
+  <pre id="boot-error-msg" style="background:#122D52;padding:16px;border-radius:8px;white-space:pre-wrap;word-break:break-word;font-size:13px;color:#ff8888;"></pre>
+</div>
+<script>
+  window.addEventListener("error", function(e){
+    var box=document.getElementById("boot-error");
+    var msg=document.getElementById("boot-error-msg");
+    if(box&&msg){
+      box.style.display="block";
+      msg.textContent += (e.message||"Erro desconhecido") + "\n  em " + (e.filename||"?") + ":" + (e.lineno||"?") + "\n\n";
+    }
+  });
+  window.addEventListener("unhandledrejection", function(e){
+    var box=document.getElementById("boot-error");
+    var msg=document.getElementById("boot-error-msg");
+    if(box&&msg){
+      box.style.display="block";
+      msg.textContent += "Promise rejeitada: " + (e.reason && e.reason.message ? e.reason.message : e.reason) + "\n\n";
+    }
+  });
+</script>
+<script>
+(function(){
+  var firebaseConfig = {
+    apiKey: "AIzaSyDm51zWQcIDRpfuKU46ZHLFHBc330PsHFg",
+    authDomain: "nauticos-crm.firebaseapp.com",
+    projectId: "nauticos-crm",
+    storageBucket: "nauticos-crm.firebasestorage.app",
+    messagingSenderId: "746071232271",
+    appId: "1:746071232271:web:e4581ff2e8b94882be387a"
+  };
+  function showBootError(text){
+    var box=document.getElementById("boot-error");
+    var msg=document.getElementById("boot-error-msg");
+    if(box&&msg){ box.style.display="block"; msg.textContent += text + "\n\n"; }
+  }
+  try{
+    var app=firebase.initializeApp(firebaseConfig);
+    var db=firebase.firestore();
+    var storage=firebase.storage();
+    var auth=firebase.auth();
+    window.__FB={ db:db, storage:storage, auth:auth, compat:true };
+    window.dispatchEvent(new Event("firebase-ready"));
+  }catch(err){
+    showBootError("Erro ao iniciar Firebase: "+(err.message||err));
+  }
+})();
+</script>
+<script type="text/plain" id="app-source">
+const{useState,useEffect,useRef,useCallback}=React;
+
+// ── Tema ──────────────────────────────────────────────────────────────────────
+const T={
+  navy:"#0B1F3A",navyL:"#132A4E",blue:"#1A56A0",blueA:"#2575D0",
+  steel:"#8BA3C1",steelL:"#C4D4E8",gold:"#D4A017",goldL:"#F0C040",
+  surface:"#0E2544",card:"#122D52",cardH:"#163660",
+  danger:"#C0392B",success:"#1A7A4A",warn:"#D4851A",
+  text:"#E8F0FC",muted:"#7A96B8",
+};
+
+// ── Firebase helpers (async, via window.__FB — API compat) ────────────────────
+const fbReady=()=>new Promise(r=>{if(window.__FB)return r();window.addEventListener("firebase-ready",r,{once:true});});
+
+async function fbGetAll(col){
+  await fbReady();
+  const {db}=window.__FB;
+  const snap=await db.collection(col).get();
+  return snap.docs.map(d=>({id:d.id,...d.data()}));
+}
+async function fbSet(col,id,data){
+  await fbReady();
+  const {db}=window.__FB;
+  await db.collection(col).doc(id).set(data);
+}
+async function fbDel(col,id){
+  await fbReady();
+  const {db}=window.__FB;
+  await db.collection(col).doc(id).delete();
+}
+async function fbSubscribe(col,cb){
+  await fbReady();
+  const {db}=window.__FB;
+  return db.collection(col).onSnapshot(snap=>{
+    cb(snap.docs.map(d=>({id:d.id,...d.data()})));
+  });
+}
+async function fbUpload(path,file){
+  await fbReady();
+  const {storage}=window.__FB;
+  const r=storage.ref(path);
+  await r.put(file);
+  return await r.getDownloadURL();
+}
+async function fbDelFile(path){
+  try{
+    await fbReady();
+    const {storage}=window.__FB;
+    await storage.ref(path).delete();
+  }catch{}
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const uid=()=>Math.random().toString(36).slice(2,10);
+const fmt=(d)=>d?new Date(d+"T12:00:00").toLocaleDateString("pt-BR"):"—";
+const today=()=>new Date().toISOString().slice(0,10);
+const proxRev=(d)=>{if(!d)return null;const x=new Date(d+"T12:00:00");x.setMonth(x.getMonth()+6);return x;};
+const diasRev=(d)=>{const p=proxRev(d);if(!p)return null;return Math.ceil((p-new Date())/86400000);};
+const statusRev=(d)=>{const n=diasRev(d);if(n===null)return null;if(n<0)return{label:"Vencida",color:T.danger};if(n<=15)return{label:`${n}d`,color:T.danger};if(n<=45)return{label:`${n}d`,color:T.warn};return{label:`${n}d`,color:T.success};};
+
+// ── Claude API ────────────────────────────────────────────────────────────────
+async function claudeAPI(messages,system,max=1200){
+  const r=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:max,system,messages})
+  });
+  const d=await r.json();
+  return d.content?.[0]?.text||"";
+}
+
+// ── Componentes base ──────────────────────────────────────────────────────────
+function Spinner({size=20}){
+  return <div style={{width:size,height:size,border:`3px solid ${T.steel}33`,borderTop:`3px solid ${T.blueA}`,borderRadius:"50%",animation:"spin 1s linear infinite",margin:"auto"}}/>;
+}
+function Badge({label,color}){
+  return <span style={{background:color+"22",color,border:`1px solid ${color}44`,borderRadius:4,padding:"2px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{label}</span>;
+}
+function Btn({children,onClick,variant="primary",small,icon,disabled,full,style:sx}){
+  const base={display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6,border:"none",borderRadius:7,cursor:disabled?"not-allowed":"pointer",fontFamily:"inherit",fontWeight:600,transition:"opacity .15s",padding:small?"6px 13px":"10px 20px",fontSize:small?12:14,opacity:disabled?.45:1,width:full?"100%":"auto"};
+  const v={primary:{background:T.blueA,color:"#fff"},gold:{background:T.gold,color:T.navy},ghost:{background:"transparent",color:T.steel,border:`1px solid ${T.steel}44`},danger:{background:T.danger+"22",color:T.danger,border:`1px solid ${T.danger}44`},success:{background:T.success+"22",color:"#4CAF82",border:`1px solid ${T.success}44`}};
+  return <button onClick={disabled?undefined:onClick} style={{...base,...v[variant],...sx}}>{icon&&<span>{icon}</span>}{children}</button>;
+}
+const iStyle={background:T.navy,border:`1px solid ${T.steel}33`,borderRadius:6,color:T.text,padding:"8px 12px",fontSize:14,fontFamily:"inherit",outline:"none",width:"100%",boxSizing:"border-box"};
+function Fld({label,required,children}){return <div style={{display:"flex",flexDirection:"column",gap:4}}>{label&&<label style={{fontSize:11,color:T.steel,fontWeight:700,letterSpacing:.5,textTransform:"uppercase"}}>{label}{required&&<span style={{color:T.danger}}> *</span>}</label>}{children}</div>;}
+function Inp({label,value,onChange,type="text",placeholder,required}){return <Fld label={label} required={required}><input type={type} value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={iStyle}/></Fld>;}
+function Txta({label,value,onChange,placeholder,rows=3}){return <Fld label={label}><textarea value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows} style={{...iStyle,resize:"vertical"}}/></Fld>;}
+function Sel({label,value,onChange,options,required}){return <Fld label={label} required={required}><select value={value||""} onChange={e=>onChange(e.target.value)} style={iStyle}>{options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></Fld>;}
+function Toggle({label,value,onChange,desc}){
+  return <div style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",background:T.navy,borderRadius:8,border:`1px solid ${T.steel}22`,cursor:"pointer"}} onClick={()=>onChange(!value)}>
+    <div style={{width:36,height:20,borderRadius:10,background:value?T.blueA:T.steel+"44",position:"relative",flexShrink:0,transition:"background .2s",marginTop:2}}>
+      <div style={{position:"absolute",top:2,left:value?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left .2s"}}/>
+    </div>
+    <div><div style={{fontSize:13,fontWeight:600,color:T.text}}>{label}</div>{desc&&<div style={{fontSize:11,color:T.muted,marginTop:2}}>{desc}</div>}</div>
+  </div>;
+}
+function Modal({open,onClose,title,children,width=640}){
+  if(!open)return null;
+  return <div style={{position:"fixed",inset:0,background:"#00000099",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div style={{background:T.card,borderRadius:12,width:"100%",maxWidth:width,maxHeight:"92vh",overflow:"auto",border:`1px solid ${T.steel}22`,boxShadow:"0 24px 64px #000000aa",animation:"fadeIn .2s ease"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"18px 22px",borderBottom:`1px solid ${T.steel}22`,position:"sticky",top:0,background:T.card,zIndex:1}}>
+        <h3 style={{margin:0,color:T.text,fontSize:16}}>{title}</h3>
+        <button onClick={onClose} style={{background:"none",border:"none",color:T.muted,cursor:"pointer",fontSize:22}}>✕</button>
+      </div>
+      <div style={{padding:22}}>{children}</div>
+    </div>
+  </div>;
+}
+function SecTitle({children}){
+  return <div style={{fontSize:10,color:T.goldL,fontWeight:800,letterSpacing:1.5,textTransform:"uppercase",margin:"16px 0 10px",display:"flex",alignItems:"center",gap:8}}>
+    <div style={{flex:1,height:1,background:T.goldL+"33"}}/>{children}<div style={{flex:1,height:1,background:T.goldL+"33"}}/>
+  </div>;
+}
+
+// ── Motor Form ────────────────────────────────────────────────────────────────
+const POSICOES=["Bombordo","Boreste","Centro","Vante"];
+const emptyMotor=(idx=0)=>({id:uid(),posicao:POSICOES[idx]||`Motor ${idx+1}`,modeloMotor:"",serialMotor:"",modeloTransmissao:"",serialTransmissao:"",modeloTsk:"",serialTsk:"",dataEntrega:"",horimetro:"",ultimaRevisao:""});
+
+function MotorForm({motor,index,onChange,onRemove,canRemove}){
+  const s=v=>onChange({...motor,...v});
+  return <div style={{background:T.navyL,borderRadius:10,padding:16,marginBottom:12,border:`1px solid ${T.steel}22`}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+      <div style={{fontSize:13,color:T.goldL,fontWeight:700}}>🔩 Motor {motor.posicao}</div>
+      {canRemove&&<Btn small variant="danger" onClick={onRemove}>✕ Remover</Btn>}
+    </div>
+    <div style={{marginBottom:12}}>
+      <div style={{fontSize:10,color:T.steel,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>Posição</div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {POSICOES.map(p=><button key={p} onClick={()=>s({posicao:p})} style={{padding:"5px 14px",borderRadius:20,border:`1px solid ${motor.posicao===p?T.blueA:T.steel+"44"}`,background:motor.posicao===p?T.blueA+"33":"transparent",color:motor.posicao===p?T.blueA:T.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{p}</button>)}
+      </div>
+    </div>
+    <SecTitle>Motor</SecTitle>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+      <Inp label="Modelo" value={motor.modeloMotor} onChange={v=>s({modeloMotor:v})} placeholder="Ex: D4-300"/>
+      <Inp label="Nº de Série" value={motor.serialMotor} onChange={v=>s({serialMotor:v})}/>
+    </div>
+    <SecTitle>Transmissão</SecTitle>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+      <Inp label="Modelo" value={motor.modeloTransmissao} onChange={v=>s({modeloTransmissao:v})} placeholder="Ex: DP-S"/>
+      <Inp label="Nº de Série" value={motor.serialTransmissao} onChange={v=>s({serialTransmissao:v})}/>
+    </div>
+    <SecTitle>TSK</SecTitle>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+      <Inp label="Modelo" value={motor.modeloTsk} onChange={v=>s({modeloTsk:v})} placeholder="Ex: TSK-1"/>
+      <Inp label="Nº de Série" value={motor.serialTsk} onChange={v=>s({serialTsk:v})}/>
+    </div>
+    <SecTitle>Dados Operacionais</SecTitle>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+      <Inp label="Data de entrega" type="date" value={motor.dataEntrega} onChange={v=>s({dataEntrega:v})}/>
+      <Inp label="Horímetro (h)" type="number" value={motor.horimetro} onChange={v=>s({horimetro:v})} placeholder="1250"/>
+      <Inp label="Última revisão" type="date" value={motor.ultimaRevisao} onChange={v=>s({ultimaRevisao:v})}/>
+    </div>
+  </div>;
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+function Dashboard({data,onNav}){
+  const{embarcacoes,atendimentos}=data;
+  const alertas=embarcacoes.flatMap(e=>(e.motores||[]).map(m=>{
+    const s=statusRev(m.ultimaRevisao);
+    if(!s||!m.ultimaRevisao)return null;
+    const d=diasRev(m.ultimaRevisao);
+    if(d>45)return null;
+    return{embNome:e.nome,motor:m.posicao||m.modeloMotor,dias:d,status:s,embId:e.id};
+  }).filter(Boolean)).sort((a,b)=>a.dias-b.dias);
+
+  const pendencias=atendimentos.filter(a=>a.pendencia&&a.pendenciaLembrete)
+    .map(a=>({...a,embNome:embarcacoes.find(e=>e.id===a.embarcacaoId)?.nome||"—"}))
+    .sort((a,b)=>new Date(b.data)-new Date(a.data)).slice(0,6);
+
+  const ultimos=[...atendimentos].sort((a,b)=>new Date(b.data)-new Date(a.data)).slice(0,6)
+    .map(a=>({...a,embNome:embarcacoes.find(e=>e.id===a.embarcacaoId)?.nome||"—"}));
+
+  const Stat=({icon,val,label,color,sub})=><div style={{background:T.card,borderRadius:10,padding:"16px 18px",border:`1px solid ${T.steel}18`,flex:1,minWidth:120}}>
+    <div style={{fontSize:24,marginBottom:5}}>{icon}</div>
+    <div style={{fontSize:28,fontWeight:800,color:color||T.goldL}}>{val}</div>
+    <div style={{fontSize:11,color:T.muted,fontWeight:600,marginTop:1}}>{label}</div>
+    {sub&&<div style={{fontSize:10,color:T.steel,marginTop:2}}>{sub}</div>}
+  </div>;
+
+  return <div style={{padding:22,maxWidth:1100,margin:"0 auto"}}>
+    <div style={{marginBottom:24,display:"flex",alignItems:"center",gap:12}}>
+      <span style={{fontSize:28}}>⚓</span>
+      <div>
+        <h1 style={{fontSize:22,color:T.text,fontFamily:"'Playfair Display',serif",fontWeight:800}}>NauticOS</h1>
+        <div style={{fontSize:12,color:T.muted}}>{new Date().toLocaleDateString("pt-BR",{weekday:"long",day:"2-digit",month:"long",year:"numeric"})}</div>
+      </div>
+    </div>
+    <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:24}}>
+      <Stat icon="🚢" val={embarcacoes.length} label="Embarcações"/>
+      <Stat icon="🔧" val={atendimentos.length} label="Atendimentos"/>
+      <Stat icon="⚠️" val={alertas.length} label="Alertas de revisão" color={alertas.length>0?T.warn:T.success}/>
+      <Stat icon="📌" val={pendencias.length} label="Pendências ativas" color={pendencias.length>0?T.danger:T.success}/>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:18}}>
+      {/* Alertas */}
+      <div style={{background:T.card,borderRadius:10,border:`1px solid ${T.steel}18`,overflow:"hidden"}}>
+        <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.steel}18`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:700,fontSize:13,color:T.text}}>⚠️ Revisões Preventivas</div>
+          <Badge label={`${alertas.length} alertas`} color={alertas.length>0?T.warn:T.success}/>
+        </div>
+        <div style={{padding:8}}>
+          {alertas.length===0?<div style={{padding:18,textAlign:"center",color:T.muted,fontSize:13}}>✅ Nenhuma revisão urgente</div>
+          :alertas.map((a,i)=><div key={i} onClick={()=>onNav("embarcacoes",a.embId)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 11px",borderRadius:7,cursor:"pointer",background:i%2===0?T.navyL+"55":"transparent"}}>
+            <div><div style={{fontWeight:600,fontSize:13,color:T.text}}>{a.embNome}</div><div style={{fontSize:11,color:T.muted}}>{a.motor}</div></div>
+            <Badge label={a.dias<0?"VENCIDA":`${a.dias}d`} color={a.status.color}/>
+          </div>)}
+        </div>
+      </div>
+      {/* Pendências */}
+      <div style={{background:T.card,borderRadius:10,border:`1px solid ${T.steel}18`,overflow:"hidden"}}>
+        <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.steel}18`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:700,fontSize:13,color:T.text}}>📌 Pendências / Lembretes</div>
+          <Btn small variant="ghost" onClick={()=>onNav("atendimentos")}>Ver todos</Btn>
+        </div>
+        <div style={{padding:8}}>
+          {pendencias.length===0?<div style={{padding:18,textAlign:"center",color:T.muted,fontSize:13}}>Nenhuma pendência ativa</div>
+          :pendencias.map((a,i)=><div key={a.id} style={{padding:"8px 11px",borderRadius:7,background:i%2===0?T.navyL+"55":"transparent"}}>
+            <div style={{display:"flex",justifyContent:"space-between"}}>
+              <div style={{fontWeight:600,fontSize:13,color:T.goldL}}>{a.embNome}</div>
+              <div style={{fontSize:11,color:T.muted}}>{fmt(a.data)}</div>
+            </div>
+            <div style={{fontSize:12,color:T.warn,marginTop:2}}>📌 {a.pendencia}</div>
+          </div>)}
+        </div>
+      </div>
+      {/* Últimos atendimentos */}
+      <div style={{background:T.card,borderRadius:10,border:`1px solid ${T.steel}18`,overflow:"hidden",gridColumn:"1/-1"}}>
+        <div style={{padding:"13px 16px",borderBottom:`1px solid ${T.steel}18`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:700,fontSize:13,color:T.text}}>🔧 Últimos Atendimentos</div>
+          <Btn small variant="ghost" onClick={()=>onNav("atendimentos")}>Ver todos</Btn>
+        </div>
+        <div style={{padding:8}}>
+          {ultimos.length===0?<div style={{padding:18,textAlign:"center",color:T.muted,fontSize:13}}>Nenhum atendimento registrado</div>
+          :ultimos.map((a,i)=><div key={a.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 11px",borderRadius:7,background:i%2===0?T.navyL+"55":"transparent"}}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:13,color:T.text}}>{a.embNome} <span style={{color:T.muted,fontWeight:400,fontSize:11}}>{a.componente?`· ${a.componente}`:""}</span></div>
+              <div style={{fontSize:12,color:T.muted,maxWidth:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.servico}</div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {a.pendencia&&a.pendenciaLembrete&&<Badge label="📌" color={T.warn}/>}
+              <span style={{fontSize:11,color:T.steel}}>{fmt(a.data)}</span>
+            </div>
+          </div>)}
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── EMBARCAÇÕES ───────────────────────────────────────────────────────────────
+function Embarcacoes({data,setData,focusId,showToast}){
+  const[modal,setModal]=useState(false);
+  const[editId,setEditId]=useState(null);
+  const[search,setSearch]=useState("");
+  const[detailId,setDetailId]=useState(focusId||null);
+  const[saving,setSaving]=useState(false);
+  const emptyForm=()=>({nome:"",proprietario:"",telefone:"",marina:"",anotacoes:"",motores:[emptyMotor(0),emptyMotor(1)]});
+  const[form,setForm]=useState(emptyForm());
+
+  useEffect(()=>{if(focusId)setDetailId(focusId);},[focusId]);
+
+  const filtered=data.embarcacoes.filter(e=>e.nome.toLowerCase().includes(search.toLowerCase())||e.proprietario?.toLowerCase().includes(search.toLowerCase()));
+  const detail=detailId?data.embarcacoes.find(e=>e.id===detailId):null;
+  const detailAtend=detail?[...data.atendimentos].filter(a=>a.embarcacaoId===detail.id).sort((a,b)=>new Date(b.data)-new Date(a.data)):[];
+
+  const openNew=()=>{setForm(emptyForm());setEditId(null);setModal(true);};
+  const openEdit=(e)=>{setForm({...e,motores:(e.motores||[]).length>0?e.motores:[emptyMotor(0),emptyMotor(1)]});setEditId(e.id);setModal(true);};
+  const updMotor=(idx,m)=>setForm(f=>{const ms=[...f.motores];ms[idx]=m;return{...f,motores:ms};});
+  const addMotor=()=>setForm(f=>({...f,motores:[...f.motores,emptyMotor(f.motores.length)]}));
+  const remMotor=(idx)=>setForm(f=>({...f,motores:f.motores.filter((_,i)=>i!==idx)}));
+
+  const save=async()=>{
+    if(!form.nome.trim())return;
+    setSaving(true);
+    try{
+      const id=editId||uid();
+      const rec={...form,id};
+      await fbSet("embarcacoes",id,rec);
+      const novo=data.embarcacoes.filter(e=>e.id!==id);
+      setData({...data,embarcacoes:[...novo,rec]});
+      setModal(false);
+      showToast("✅ Embarcação salva!");
+    }catch(e){showToast("❌ Erro ao salvar: "+e.message);}
+    setSaving(false);
+  };
+
+  const remove=async(id)=>{
+    if(!confirm("Remover embarcação e todos os atendimentos?"))return;
+    await fbDel("embarcacoes",id);
+    const idsAtend=data.atendimentos.filter(a=>a.embarcacaoId===id).map(a=>a.id);
+    for(const aid of idsAtend)await fbDel("atendimentos",aid);
+    setData({...data,embarcacoes:data.embarcacoes.filter(e=>e.id!==id),atendimentos:data.atendimentos.filter(a=>a.embarcacaoId!==id)});
+    if(detailId===id)setDetailId(null);
+    showToast("🗑️ Embarcação removida");
+  };
+
+  return <div style={{padding:20,maxWidth:1100,margin:"0 auto"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+      <div><h2 style={{margin:0,color:T.text,fontSize:20}}>🚢 Embarcações</h2><div style={{fontSize:12,color:T.muted,marginTop:2}}>{filtered.length} cadastradas</div></div>
+      <Btn onClick={openNew} icon="+" variant="primary">Nova Embarcação</Btn>
+    </div>
+    <Inp placeholder="Buscar por nome ou proprietário…" value={search} onChange={setSearch}/>
+    <div style={{display:"grid",gridTemplateColumns:detail?"1fr 1.7fr":"1fr",gap:14,marginTop:14}}>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {filtered.length===0&&<div style={{textAlign:"center",padding:40,color:T.muted}}>Nenhuma embarcação cadastrada</div>}
+        {filtered.map(e=>{
+          const mots=e.motores||[];
+          const alts=mots.filter(m=>{const d=diasRev(m.ultimaRevisao);return d!==null&&d<=45;});
+          const isA=detailId===e.id;
+          return <div key={e.id} onClick={()=>setDetailId(isA?null:e.id)} style={{background:isA?T.cardH:T.card,border:`1px solid ${isA?T.blueA:T.steel+"18"}`,borderRadius:10,padding:"12px 15px",cursor:"pointer",transition:"all .15s"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15,color:T.text}}>{e.nome}</div>
+                <div style={{fontSize:12,color:T.muted,marginTop:2}}>👤 {e.proprietario||"—"} · 📍 {e.marina||"—"}</div>
+                <div style={{fontSize:11,color:T.steel,marginTop:3}}>🔩 {mots.map(m=>m.posicao||m.modeloMotor||"Motor").join(" · ")||"Sem motores"}</div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:5,alignItems:"flex-end"}}>
+                {alts.length>0&&<Badge label={`⚠️ ${alts.length} alerta${alts.length>1?"s":""}`} color={T.warn}/>}
+                <div style={{display:"flex",gap:5}}>
+                  <Btn small variant="ghost" onClick={ev=>{ev.stopPropagation();openEdit(e);}}>✏️</Btn>
+                  <Btn small variant="danger" onClick={ev=>{ev.stopPropagation();remove(e.id);}}>🗑️</Btn>
+                </div>
+              </div>
+            </div>
+          </div>;
+        })}
+      </div>
+      {detail&&<div style={{background:T.card,borderRadius:10,border:`1px solid ${T.steel}18`,overflow:"hidden"}}>
+        <div style={{background:T.navyL,padding:"13px 17px",borderBottom:`1px solid ${T.steel}18`}}>
+          <div style={{fontSize:17,fontWeight:800,color:T.goldL}}>{detail.nome}</div>
+          <div style={{fontSize:12,color:T.muted,marginTop:2}}>👤 {detail.proprietario||"—"} · 📞 {detail.telefone||"—"} · 📍 {detail.marina||"—"}</div>
+        </div>
+        <div style={{padding:16,overflowY:"auto",maxHeight:"calc(100vh - 180px)"}}>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11,color:T.steel,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginBottom:8}}>Motores</div>
+            {(detail.motores||[]).map((m,i)=>{
+              const s=statusRev(m.ultimaRevisao);
+              const pr=proxRev(m.ultimaRevisao);
+              return <div key={m.id} style={{background:T.navy,borderRadius:8,padding:"10px 13px",marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <div style={{fontWeight:700,fontSize:13,color:T.goldL}}>🔩 {m.posicao}{m.modeloMotor?` · ${m.modeloMotor}`:""}</div>
+                  {s&&<Badge label={s.label==="Vencida"?"⚠️ Vencida":`🔔 ${s.label}`} color={s.color}/>}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"110px 1fr",gap:"3px 8px",fontSize:11}}>
+                  {m.serialMotor&&<><span style={{color:T.muted}}>S/N Motor</span><span style={{color:T.text}}>{m.serialMotor}</span></>}
+                  {m.modeloTransmissao&&<><span style={{color:T.muted}}>⚙️ Transmissão</span><span style={{color:T.text}}>{m.modeloTransmissao}{m.serialTransmissao?` · S/N: ${m.serialTransmissao}`:""}</span></>}
+                  {m.modeloTsk&&<><span style={{color:T.muted}}>🔧 TSK</span><span style={{color:T.text}}>{m.modeloTsk}{m.serialTsk?` · S/N: ${m.serialTsk}`:""}</span></>}
+                  {m.dataEntrega&&<><span style={{color:T.muted}}>📦 Entrega</span><span style={{color:T.text}}>{fmt(m.dataEntrega)}</span></>}
+                  {m.horimetro&&<><span style={{color:T.muted}}>⏱️ Horímetro</span><span style={{color:T.text}}>{m.horimetro}h</span></>}
+                  {m.ultimaRevisao&&<><span style={{color:T.muted}}>🔧 Últ. revisão</span><span style={{color:T.text}}>{fmt(m.ultimaRevisao)}{pr?` → Próx: ${pr.toLocaleDateString("pt-BR")}`:""}</span></>}
+                </div>
+              </div>;
+            })}
+          </div>
+          {detail.anotacoes&&<div style={{marginBottom:14}}>
+            <div style={{fontSize:11,color:T.steel,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginBottom:6}}>Anotações</div>
+            <div style={{background:T.navy,borderRadius:8,padding:"10px 13px",fontSize:13,color:T.text,whiteSpace:"pre-wrap"}}>{detail.anotacoes}</div>
+          </div>}
+          <div>
+            <div style={{fontSize:11,color:T.steel,fontWeight:700,letterSpacing:.5,textTransform:"uppercase",marginBottom:8}}>Histórico ({detailAtend.length})</div>
+            {detailAtend.length===0?<div style={{color:T.muted,fontSize:13}}>Nenhum atendimento</div>
+            :detailAtend.map(a=><div key={a.id} style={{background:T.navy,borderRadius:8,padding:"10px 13px",marginBottom:6}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:11,color:T.muted,marginBottom:2}}>{fmt(a.data)}{a.componente?` · ${a.componente}`:""}</div>
+                  <div style={{fontSize:13,color:T.text}}>{a.servico}</div>
+                  {a.pendencia&&<div style={{fontSize:11,color:T.warn,marginTop:4}}>📌 {a.pendencia}</div>}
+                </div>
+                {a.arquivos?.length>0&&<Badge label={`📎 ${a.arquivos.length}`} color={T.blueA}/>}
+              </div>
+            </div>)}
+          </div>
+        </div>
+      </div>}
+    </div>
+    <Modal open={modal} onClose={()=>setModal(false)} title={editId?"Editar Embarcação":"Nova Embarcação"} width={720}>
+      <SecTitle>Dados da Embarcação</SecTitle>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:4}}>
+        <div style={{gridColumn:"1/-1"}}><Inp label="Nome da Embarcação" value={form.nome} onChange={v=>setForm(f=>({...f,nome:v}))} required/></div>
+        <Inp label="Proprietário" value={form.proprietario} onChange={v=>setForm(f=>({...f,proprietario:v}))}/>
+        <Inp label="Telefone" value={form.telefone} onChange={v=>setForm(f=>({...f,telefone:v}))}/>
+        <div style={{gridColumn:"1/-1"}}><Inp label="Marina / Localização" value={form.marina} onChange={v=>setForm(f=>({...f,marina:v}))} placeholder="Ex: Marina da Glória, RJ"/></div>
+        <div style={{gridColumn:"1/-1"}}><Txta label="Anotações gerais" value={form.anotacoes} onChange={v=>setForm(f=>({...f,anotacoes:v}))} rows={2}/></div>
+      </div>
+      <SecTitle>Motores</SecTitle>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}>
+        <Btn small variant="success" onClick={addMotor} icon="+">Acrescentar Motor</Btn>
+      </div>
+      {form.motores.map((m,i)=><MotorForm key={m.id} motor={m} index={i} onChange={u=>updMotor(i,u)} onRemove={()=>remMotor(i)} canRemove={form.motores.length>1}/>)}
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:18,borderTop:`1px solid ${T.steel}22`,paddingTop:14}}>
+        <Btn variant="ghost" onClick={()=>setModal(false)}>Cancelar</Btn>
+        <Btn variant="primary" onClick={save} disabled={saving}>{saving?<Spinner size={16}/>:"💾 Salvar Embarcação"}</Btn>
+      </div>
+    </Modal>
+  </div>;
+}
+
+// ── ATENDIMENTOS ──────────────────────────────────────────────────────────────
+function Atendimentos({data,setData,showToast}){
+  const[modal,setModal]=useState(false);
+  const[modalImport,setModalImport]=useState(false);
+  const[modalAnexos,setModalAnexos]=useState(null);
+  const[editId,setEditId]=useState(null);
+  const[search,setSearch]=useState("");
+  const[saving,setSaving]=useState(false);
+  const[uploading,setUploading]=useState(false);
+  const fileRef=useRef();
+  const pdfRef=useRef();
+
+  const[importStep,setImportStep]=useState("upload");
+  const[importPdf,setImportPdf]=useState(null);
+  const[importErr,setImportErr]=useState("");
+
+  const emptyForm={embarcacaoId:"",componente:"",componenteId:"",data:today(),horimetro:"",servico:"",observacoes:"",ultimaRevisao:"",pendencia:"",pendenciaLembrete:false,arquivos:[]};
+  const[form,setForm]=useState(emptyForm);
+  const[arquivos,setArquivos]=useState([]); // {id,nome,tipo,url,storagePath,preview}
+  const sf=v=>setForm(f=>({...f,...v}));
+
+  const emb=form.embarcacaoId?data.embarcacoes.find(e=>e.id===form.embarcacaoId):null;
+  const compOpts=emb?[
+    {value:"",label:"Selecione o componente…"},
+    ...(emb.motores||[]).flatMap(m=>[
+      {value:`motor_${m.id}`,label:`🔩 Motor ${m.posicao||m.modeloMotor}${m.serialMotor?` · S/N:${m.serialMotor}`:""}`},
+      m.modeloTransmissao?{value:`transm_${m.id}`,label:`⚙️ Transmissão ${m.posicao}${m.serialTransmissao?` · S/N:${m.serialTransmissao}`:""}`}:null,
+      m.modeloTsk?{value:`tsk_${m.id}`,label:`🔧 TSK ${m.posicao}${m.serialTsk?` · S/N:${m.serialTsk}`:""}`}:null,
+    ].filter(Boolean)),
+    {value:"geral",label:"🚢 Embarcação geral / outro"},
+  ]:[{value:"",label:"Primeiro selecione a embarcação"}];
+
+  const openNew=()=>{setForm(emptyForm);setArquivos([]);setEditId(null);setModal(true);};
+  const openEdit=(a)=>{setForm({...a});setArquivos(a.arquivos||[]);setEditId(a.id);setModal(true);};
+
+  // Upload de arquivos para Firebase Storage
+  const handleFiles=async(e)=>{
+    const files=Array.from(e.target.files);
+    setUploading(true);
+    const novos=[];
+    for(const f of files){
+      try{
+        const path=`atendimentos/${uid()}_${f.name}`;
+        const url=await fbUpload(path,f);
+        const isImg=f.type.startsWith("image/");
+        const isVid=f.type.startsWith("video/");
+        novos.push({id:uid(),nome:f.name,tipo:f.type,url,storagePath:path,preview:isImg?url:null,isVideo:isVid});
+      }catch(err){showToast("❌ Erro no upload de "+f.name);}
+    }
+    setArquivos(p=>[...p,...novos]);
+    setUploading(false);
+    e.target.value="";
+  };
+
+  const remArquivo=async(arq)=>{
+    if(arq.storagePath)await fbDelFile(arq.storagePath);
+    setArquivos(p=>p.filter(a=>a.id!==arq.id));
+  };
+
+  const save=async()=>{
+    if(!form.embarcacaoId||!form.servico.trim())return;
+    setSaving(true);
+    try{
+      const id=editId||uid();
+      const record={...form,arquivos,id};
+      await fbSet("atendimentos",id,record);
+      // Atualiza horímetro/revisão no motor
+      if(form.componenteId&&(form.horimetro||form.ultimaRevisao)){
+        const embAtual=data.embarcacoes.find(e=>e.id===form.embarcacaoId);
+        if(embAtual){
+          const embUp={...embAtual,motores:(embAtual.motores||[]).map(m=>{
+            if(m.id!==form.componenteId)return m;
+            return{...m,horimetro:form.horimetro||m.horimetro,ultimaRevisao:form.ultimaRevisao||m.ultimaRevisao};
+          })};
+          await fbSet("embarcacoes",embAtual.id,embUp);
+          setData(d=>({...d,embarcacoes:d.embarcacoes.map(e=>e.id===embAtual.id?embUp:e)}));
+        }
+      }
+      const novos=data.atendimentos.filter(a=>a.id!==id);
+      setData(d=>({...d,atendimentos:[...novos,record]}));
+      setModal(false);
+      showToast("✅ Atendimento salvo!");
+    }catch(err){showToast("❌ Erro: "+err.message);}
+    setSaving(false);
+  };
+
+  const remove=async(id)=>{
+    if(!confirm("Remover atendimento?"))return;
+    const atend=data.atendimentos.find(a=>a.id===id);
+    for(const arq of atend?.arquivos||[])if(arq.storagePath)await fbDelFile(arq.storagePath);
+    await fbDel("atendimentos",id);
+    setData(d=>({...d,atendimentos:d.atendimentos.filter(a=>a.id!==id)}));
+    showToast("🗑️ Atendimento removido");
+  };
+
+  // Importar OS
+  const openImport=()=>{setImportStep("upload");setImportPdf(null);setImportErr("");setArquivos([]);setModalImport(true);};
+  const handlePdf=(e)=>{
+    const f=e.target.files[0];if(!f)return;
+    const r=new FileReader();
+    r.onload=ev=>setImportPdf({b64:ev.target.result.split(",")[1],nome:f.name,file:f});
+    r.readAsDataURL(f);
+  };
+  const lerOS=async()=>{
+    if(!importPdf)return;
+    setImportStep("reading");setImportErr("");
+    const ctx=data.embarcacoes.map(e=>`- ${e.nome} (ID:${e.id})`).join("\n");
+    try{
+      const txt=await claudeAPI([{role:"user",content:[
+        {type:"document",source:{type:"base64",media_type:"application/pdf",data:importPdf.b64}},
+        {type:"text",text:"Extraia os dados desta OS."}
+      ]}],`Você lê OS Volvo Penta. Retorne SOMENTE JSON sem markdown:\n{"embarcacaoNome":"","data":"YYYY-MM-DD","horimetro":"","servico":"","observacoes":"","ultimaRevisao":"YYYY-MM-DD","tecnico":"","numeroOS":""}\nEmbarcações:\n${ctx||"Nenhuma"}`);
+      const p=JSON.parse(txt.replace(/```json|```/g,"").trim());
+      const embM=data.embarcacoes.find(e=>p.embarcacaoNome&&e.nome.toLowerCase().includes(p.embarcacaoNome.toLowerCase()));
+      const obs=[p.observacoes,p.tecnico?`Técnico: ${p.tecnico}`:"",p.numeroOS?`OS Nº: ${p.numeroOS}`:""].filter(Boolean).join("\n");
+      setForm({...emptyForm,embarcacaoId:embM?.id||"",data:p.data||today(),horimetro:p.horimetro||"",servico:p.servico||"",observacoes:obs,ultimaRevisao:p.ultimaRevisao||""});
+      // Faz upload do PDF para o Storage
+      setUploading(true);
+      try{
+        const path=`atendimentos/${uid()}_${importPdf.nome}`;
+        const url=await fbUpload(path,importPdf.file);
+        setArquivos([{id:uid(),nome:importPdf.nome,tipo:"application/pdf",url,storagePath:path,preview:null}]);
+      }catch{}
+      setUploading(false);
+      setImportStep("review");
+    }catch{setImportErr("Não foi possível ler o PDF.");setImportStep("upload");}
+  };
+
+  const filtered=[...data.atendimentos].sort((a,b)=>new Date(b.data)-new Date(a.data))
+    .filter(a=>{const e=data.embarcacoes.find(x=>x.id===a.embarcacaoId);return!search||e?.nome.toLowerCase().includes(search.toLowerCase())||a.servico?.toLowerCase().includes(search.toLowerCase());})
+    .map(a=>({...a,embNome:data.embarcacoes.find(e=>e.id===a.embarcacaoId)?.nome||"—"}));
+
+  return <div style={{padding:20,maxWidth:920,margin:"0 auto"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+      <div><h2 style={{margin:0,color:T.text,fontSize:20}}>🔧 Atendimentos</h2><div style={{fontSize:12,color:T.muted,marginTop:2}}>{data.atendimentos.length} registros</div></div>
+      <div style={{display:"flex",gap:8}}>
+        <Btn onClick={openImport} icon="📄" variant="gold">Importar OS</Btn>
+        <Btn onClick={openNew} icon="+" variant="primary">Novo Atendimento</Btn>
+      </div>
+    </div>
+    <Inp placeholder="Buscar por embarcação ou serviço…" value={search} onChange={setSearch}/>
+    <div style={{marginTop:14,display:"flex",flexDirection:"column",gap:8}}>
+      {filtered.length===0&&<div style={{textAlign:"center",padding:40,color:T.muted}}>Nenhum atendimento encontrado</div>}
+      {filtered.map(a=><div key={a.id} style={{background:T.card,borderRadius:10,border:`1px solid ${a.pendencia&&a.pendenciaLembrete?T.warn+"55":T.steel+"18"}`,padding:"13px 16px",animation:"fadeIn .2s"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:4}}>
+              <span style={{fontWeight:700,fontSize:14,color:T.goldL}}>{a.embNome}</span>
+              {a.componente&&<Badge label={a.componente} color={T.blueA}/>}
+              <span style={{fontSize:11,color:T.muted}}>· {fmt(a.data)}</span>
+              {a.arquivos?.length>0&&<button onClick={()=>setModalAnexos(a)} style={{background:"none",border:"none",cursor:"pointer",padding:0}}><Badge label={`📎 ${a.arquivos.length} anexo${a.arquivos.length>1?"s":""}`} color={T.steel}/></button>}
+            </div>
+            <div style={{fontSize:13,color:T.text,marginBottom:a.observacoes?3:0}}>{a.servico}</div>
+            {a.observacoes&&<div style={{fontSize:12,color:T.muted,whiteSpace:"pre-line"}}>{a.observacoes}</div>}
+            <div style={{display:"flex",gap:12,marginTop:4,flexWrap:"wrap"}}>
+              {a.horimetro&&<span style={{fontSize:11,color:T.steel}}>⏱️ {a.horimetro}h</span>}
+              {a.ultimaRevisao&&<span style={{fontSize:11,color:T.steel}}>🔧 Rev: {fmt(a.ultimaRevisao)}</span>}
+            </div>
+            {a.pendencia&&<div style={{marginTop:6,padding:"5px 10px",background:T.warn+"18",borderRadius:6,fontSize:12,color:T.warn,border:`1px solid ${T.warn}33`}}>
+              📌 <strong>Pendência:</strong> {a.pendencia} {a.pendenciaLembrete&&<span style={{fontSize:10,color:T.gold}}>(lembrete ativo)</span>}
+            </div>}
+          </div>
+          <div style={{display:"flex",gap:6,marginLeft:12,flexShrink:0}}>
+            <Btn small variant="ghost" onClick={()=>openEdit(a)}>✏️</Btn>
+            <Btn small variant="danger" onClick={()=>remove(a.id)}>🗑️</Btn>
+          </div>
+        </div>
+        {/* Previews de imagem inline */}
+        {a.arquivos?.some(f=>f.preview)&&<div style={{display:"flex",gap:6,marginTop:8,flexWrap:"wrap"}}>
+          {a.arquivos.filter(f=>f.preview).slice(0,4).map(f=><img key={f.id} src={f.url||f.preview} style={{width:60,height:60,objectFit:"cover",borderRadius:6,border:`1px solid ${T.steel}33`,cursor:"pointer"}} onClick={()=>setModalAnexos(a)}/>)}
+          {a.arquivos.filter(f=>f.preview).length>4&&<div style={{width:60,height:60,borderRadius:6,background:T.navyL,display:"flex",alignItems:"center",justifyContent:"center",color:T.muted,fontSize:13,cursor:"pointer"}} onClick={()=>setModalAnexos(a)}>+{a.arquivos.filter(f=>f.preview).length-4}</div>}
+        </div>}
+      </div>)}
+    </div>
+
+    {/* Modal Anexos */}
+    <Modal open={!!modalAnexos} onClose={()=>setModalAnexos(null)} title={`📎 Anexos — ${modalAnexos?.embNome||""} · ${fmt(modalAnexos?.data)}`} width={620}>
+      {modalAnexos&&<div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {modalAnexos.arquivos?.length===0&&<div style={{color:T.muted,textAlign:"center",padding:20}}>Nenhum anexo</div>}
+        {modalAnexos.arquivos?.map(f=><div key={f.id} style={{background:T.navy,borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}>
+          {f.preview&&<img src={f.url||f.preview} style={{width:60,height:60,objectFit:"cover",borderRadius:6,cursor:"pointer"}} onClick={()=>window.open(f.url||f.preview,"_blank")}/>}
+          {f.isVideo&&<div style={{width:60,height:60,background:T.navyL,borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,cursor:"pointer"}} onClick={()=>window.open(f.url,"_blank")}>🎥</div>}
+          {!f.preview&&!f.isVideo&&<div style={{width:60,height:60,background:T.navyL,borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26}}>📄</div>}
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:600,color:T.text}}>{f.nome}</div>
+            <div style={{fontSize:11,color:T.muted}}>{f.tipo||"arquivo"}</div>
+          </div>
+          {f.url&&<a href={f.url} target="_blank" rel="noreferrer" style={{textDecoration:"none"}}><Btn small variant="ghost">🔗 Abrir</Btn></a>}
+        </div>)}
+      </div>}
+    </Modal>
+
+    {/* Modal Importar OS */}
+    <Modal open={modalImport} onClose={()=>setModalImport(false)} title="📄 Importar Ordem de Serviço" width={540}>
+      {importStep==="upload"&&<div>
+        <p style={{color:T.muted,fontSize:13,marginBottom:16,lineHeight:1.6}}>Selecione o PDF da OS. A IA irá extrair os dados e o arquivo ficará salvo na nuvem.</p>
+        <div style={{background:T.navy,borderRadius:10,border:`2px dashed ${importPdf?T.success:T.steel+"44"}`,padding:32,textAlign:"center",cursor:"pointer"}} onClick={()=>pdfRef.current.click()}>
+          <input ref={pdfRef} type="file" accept=".pdf" style={{display:"none"}} onChange={handlePdf}/>
+          <div style={{fontSize:36,marginBottom:8}}>{importPdf?"✅":"📄"}</div>
+          <div style={{color:importPdf?T.success:T.muted,fontSize:14,fontWeight:600}}>{importPdf?importPdf.nome:"Clique para selecionar o PDF"}</div>
+        </div>
+        {importErr&&<div style={{marginTop:10,background:T.danger+"22",border:`1px solid ${T.danger}44`,borderRadius:8,padding:"10px 14px",fontSize:13,color:T.danger}}>{importErr}</div>}
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:18}}>
+          <Btn variant="ghost" onClick={()=>setModalImport(false)}>Cancelar</Btn>
+          <Btn variant="gold" onClick={lerOS} disabled={!importPdf} icon="🤖">Ler com IA</Btn>
+        </div>
+      </div>}
+      {importStep==="reading"&&<div style={{textAlign:"center",padding:"40px 20px"}}>
+        <div style={{fontSize:48,marginBottom:12}}>🤖</div>
+        <div style={{color:T.text,fontWeight:600,marginBottom:6}}>Lendo a Ordem de Serviço…</div>
+        <div style={{color:T.muted,fontSize:13,marginBottom:20}}>Aguarde enquanto a IA extrai os dados.</div>
+        <Spinner size={32}/>
+      </div>}
+      {importStep==="review"&&<div>
+        <div style={{background:T.success+"18",border:`1px solid ${T.success}44`,borderRadius:8,padding:"10px 14px",marginBottom:16,fontSize:13,color:"#4CAF82"}}>✅ Dados extraídos! Revise e confirme.</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div style={{gridColumn:"1/-1"}}>
+            <Sel label="Embarcação *" value={form.embarcacaoId} onChange={v=>sf({embarcacaoId:v,componente:"",componenteId:""})} options={[{value:"",label:"Selecione…"},...data.embarcacoes.map(e=>({value:e.id,label:e.nome}))]} required/>
+            {!form.embarcacaoId&&<div style={{fontSize:11,color:T.warn,marginTop:4}}>⚠️ Não identificada automaticamente — selecione manualmente.</div>}
+          </div>
+          <Inp label="Data" type="date" value={form.data} onChange={v=>sf({data:v})}/>
+          <Inp label="Horímetro (h)" type="number" value={form.horimetro} onChange={v=>sf({horimetro:v})}/>
+          <div style={{gridColumn:"1/-1"}}><Txta label="Serviço executado" value={form.servico} onChange={v=>sf({servico:v})} rows={3}/></div>
+          <div style={{gridColumn:"1/-1"}}><Txta label="Observações" value={form.observacoes} onChange={v=>sf({observacoes:v})} rows={2}/></div>
+          <div style={{gridColumn:"1/-1"}}><Inp label="Data da última revisão" type="date" value={form.ultimaRevisao} onChange={v=>sf({ultimaRevisao:v})}/></div>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:18}}>
+          <Btn variant="ghost" onClick={()=>setImportStep("upload")}>← Voltar</Btn>
+          <div style={{display:"flex",gap:10}}>
+            <Btn variant="ghost" onClick={()=>setModalImport(false)}>Cancelar</Btn>
+            <Btn variant="primary" onClick={()=>{setModalImport(false);setModal(true);}} disabled={!form.embarcacaoId}>✅ Continuar</Btn>
+          </div>
+        </div>
+      </div>}
+    </Modal>
+
+    {/* Modal Atendimento */}
+    <Modal open={modal} onClose={()=>setModal(false)} title={editId?"Editar Atendimento":"Novo Atendimento"} width={680}>
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <SecTitle>Identificação</SecTitle>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div style={{gridColumn:"1/-1"}}>
+            <Sel label="Embarcação *" value={form.embarcacaoId} onChange={v=>sf({embarcacaoId:v,componente:"",componenteId:""})} options={[{value:"",label:"Selecione…"},...data.embarcacoes.map(e=>({value:e.id,label:e.nome}))]} required/>
+          </div>
+          <div style={{gridColumn:"1/-1"}}>
+            <Sel label="Componente *" value={form.componente} onChange={v=>{
+              const mid=v.startsWith("motor_")?v.replace("motor_",""):v.startsWith("transm_")?v.replace("transm_",""):v.startsWith("tsk_")?v.replace("tsk_",""):null;
+              const lbl=compOpts.find(o=>o.value===v)?.label||v;
+              sf({componente:lbl,componenteId:mid||""});
+            }} options={compOpts} required/>
+          </div>
+          <Inp label="Data *" type="date" value={form.data} onChange={v=>sf({data:v})}/>
+          <Inp label="Horímetro (h)" type="number" value={form.horimetro} onChange={v=>sf({horimetro:v})} placeholder="Ex: 1250"/>
+        </div>
+        <SecTitle>Serviço</SecTitle>
+        <Txta label="Serviço executado *" value={form.servico} onChange={v=>sf({servico:v})} rows={3} placeholder="Descreva o serviço realizado…"/>
+        <Txta label="Observações técnicas" value={form.observacoes} onChange={v=>sf({observacoes:v})} rows={2} placeholder="Problemas encontrados, peças trocadas…"/>
+        <Inp label="Data da última revisão" type="date" value={form.ultimaRevisao} onChange={v=>sf({ultimaRevisao:v})}/>
+        <SecTitle>Pendências e Lembretes</SecTitle>
+        <Txta label="Pendência para próximo atendimento" value={form.pendencia} onChange={v=>sf({pendencia:v})} rows={2} placeholder="Ex: Verificar nível do óleo na próxima visita…"/>
+        {form.pendencia&&<Toggle label="Ativar como lembrete no painel" value={form.pendenciaLembrete} onChange={v=>sf({pendenciaLembrete:v})} desc="Aparece no painel principal e destaca este atendimento"/>}
+        <SecTitle>Anexos — Fotos, Vídeos e Documentos</SecTitle>
+        <div style={{background:T.navy,borderRadius:8,border:`2px dashed ${uploading?T.blueA:T.steel+"44"}`,padding:20,textAlign:"center",cursor:uploading?"not-allowed":"pointer",transition:"border .2s"}} onClick={()=>!uploading&&fileRef.current.click()}>
+          <input ref={fileRef} type="file" multiple accept="image/*,video/*,.pdf,.xlsx,.xls,.csv,.doc,.docx" style={{display:"none"}} onChange={handleFiles}/>
+          {uploading?<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}><Spinner size={28}/><div style={{color:T.muted,fontSize:13}}>Enviando para a nuvem…</div></div>
+          :<><div style={{fontSize:28,marginBottom:6}}>☁️</div><div style={{color:T.muted,fontSize:13,fontWeight:600}}>Clique para adicionar · Os arquivos ficam salvos na nuvem</div><div style={{fontSize:11,color:T.steel,marginTop:4}}>Fotos, vídeos, PDF, Excel — acessíveis de qualquer dispositivo</div></>}
+        </div>
+        {arquivos.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+          {arquivos.map(f=><div key={f.id} style={{position:"relative",cursor:"pointer"}} onClick={()=>f.url&&window.open(f.url,"_blank")}>
+            {f.preview?<img src={f.url||f.preview} style={{width:70,height:70,objectFit:"cover",borderRadius:7,border:`1px solid ${T.steel}33`}}/>
+            :<div style={{width:70,height:70,background:T.navyL,borderRadius:7,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3}}>
+              <span style={{fontSize:24}}>{f.isVideo?"🎥":f.tipo?.includes("pdf")?"📄":"📄"}</span>
+              <span style={{fontSize:9,color:T.muted,textAlign:"center",padding:"0 3px",wordBreak:"break-all",maxWidth:66,lineHeight:1.2}}>{f.nome?.slice(0,16)}</span>
+            </div>}
+            <button onClick={ev=>{ev.stopPropagation();remArquivo(f);}} style={{position:"absolute",top:-5,right:-5,background:T.danger,border:"none",borderRadius:"50%",width:18,height:18,color:"#fff",fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+            {f.url&&<div style={{position:"absolute",bottom:2,right:2,background:"#00000088",borderRadius:3,padding:"1px 4px",fontSize:9,color:"#fff"}}>✅</div>}
+          </div>)}
+        </div>}
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:18,borderTop:`1px solid ${T.steel}22`,paddingTop:14}}>
+        <Btn variant="ghost" onClick={()=>setModal(false)}>Cancelar</Btn>
+        <Btn variant="primary" onClick={save} disabled={saving||uploading}>{saving?<Spinner size={16}/>:"💾 Salvar Atendimento"}</Btn>
+      </div>
+    </Modal>
+  </div>;
+}
+
+// ── ASSISTENTE IA ─────────────────────────────────────────────────────────────
+function AssistenteIA({data}){
+  const[msgs,setMsgs]=useState([{role:"assistant",text:"Olá! Sou seu assistente Volvo Penta ⚓\n\nPosso ajudar com revisões pendentes, histórico de embarcações, diagnósticos técnicos e dúvidas gerais. Como posso ajudar?"}]);
+  const[input,setInput]=useState("");
+  const[loading,setLoading]=useState(false);
+  const bottomRef=useRef();
+  useEffect(()=>bottomRef.current?.scrollIntoView({behavior:"smooth"}),[msgs]);
+
+  const sys=`Assistente técnico Volvo Penta. Consultor de peças e serviços náuticos. Responda em português, seja direto e técnico.
+
+DADOS DO SISTEMA:
+Embarcações (${data.embarcacoes.length}):
+${data.embarcacoes.map(e=>{
+  const mots=(e.motores||[]).map(m=>`    ${m.posicao}: ${m.modeloMotor||"?"} S/N:${m.serialMotor||"?"} | Transm:${m.modeloTransmissao||"?"} | TSK:${m.modeloTsk||"?"} | ${m.horimetro||"?"}h | Últ.rev:${m.ultimaRevisao||"não registrada"} | Próx.rev:${m.ultimaRevisao?(()=>{const d=new Date(m.ultimaRevisao+"T12:00:00");d.setMonth(d.getMonth()+6);return d.toLocaleDateString("pt-BR");})():"?"}`).join("\n");
+  const pend=data.atendimentos.filter(a=>a.embarcacaoId===e.id&&a.pendencia&&a.pendenciaLembrete).map(a=>`    📌 ${a.pendencia}`).join("\n");
+  return `- ${e.nome} (${e.proprietario||"—"}) · ${e.marina||"—"}\n${mots}${pend?"\n  Pendências:\n"+pend:""}`;
+}).join("\n\n")}
+
+Últimos atendimentos:
+${[...data.atendimentos].sort((a,b)=>new Date(b.data)-new Date(a.data)).slice(0,8).map(a=>{
+  const e=data.embarcacoes.find(x=>x.id===a.embarcacaoId);
+  return `- ${a.data} | ${e?.nome||"?"} | ${a.componente||""} | ${a.servico}${a.pendencia?" | ⚠️ "+a.pendencia:""}`;
+}).join("\n")}`;
+
+  const send=async()=>{
+    if(!input.trim()||loading)return;
+    const txt=input.trim();setInput("");
+    setMsgs(p=>[...p,{role:"user",text:txt}]);
+    setLoading(true);
+    try{
+      const hist=msgs.map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.text}));
+      const resp=await claudeAPI([...hist,{role:"user",content:txt}],sys);
+      setMsgs(p=>[...p,{role:"assistant",text:resp}]);
+    }catch{setMsgs(p=>[...p,{role:"assistant",text:"Erro ao conectar. Tente novamente."}]);}
+    setLoading(false);
+  };
+
+  const quick=["Quais revisões estão vencendo?","Há pendências abertas?","Resumo dos últimos atendimentos","Dicas de manutenção preventiva D4-300"];
+
+  return <div style={{padding:20,maxWidth:800,margin:"0 auto",display:"flex",flexDirection:"column",height:"calc(100vh - 70px)"}}>
+    <h2 style={{margin:"0 0 12px",color:T.text,fontSize:20}}>🤖 Assistente IA</h2>
+    <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:12}}>
+      {quick.map(q=><button key={q} onClick={()=>setInput(q)} style={{background:T.navyL,border:`1px solid ${T.steel}33`,borderRadius:20,padding:"5px 13px",color:T.steel,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{q}</button>)}
+    </div>
+    <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:10,marginBottom:12}}>
+      {msgs.map((m,i)=><div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+        <div style={{maxWidth:"82%",background:m.role==="user"?T.blueA:T.card,borderRadius:m.role==="user"?"16px 16px 4px 16px":"16px 16px 16px 4px",padding:"11px 15px",fontSize:13,color:T.text,lineHeight:1.6,border:m.role==="assistant"?`1px solid ${T.steel}22`:"none",whiteSpace:"pre-wrap"}}>{m.text}</div>
+      </div>)}
+      {loading&&<div style={{display:"flex"}}><div style={{background:T.card,borderRadius:"16px 16px 16px 4px",padding:"12px 16px",border:`1px solid ${T.steel}22`}}><Spinner size={18}/></div></div>}
+      <div ref={bottomRef}/>
+    </div>
+    <div style={{display:"flex",gap:8}}>
+      <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Pergunte sobre manutenção, histórico, diagnóstico…" style={{...iStyle,flex:1,borderRadius:10,padding:"11px 15px"}}/>
+      <Btn variant="primary" onClick={send} disabled={loading} style={{borderRadius:10,padding:"0 18px"}}>Enviar ↑</Btn>
+    </div>
+  </div>;
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
+function Login({onSuccess}){
+  const[email,setEmail]=useState("");
+  const[senha,setSenha]=useState("");
+  const[erro,setErro]=useState("");
+  const[loading,setLoading]=useState(false);
+
+  const entrar=async(e)=>{
+    if(e&&e.preventDefault)e.preventDefault();
+    if(!email.trim()||!senha){setErro("Preencha e-mail e senha.");return;}
+    setLoading(true);setErro("");
+    try{
+      await fbReady();
+      await window.__FB.auth.signInWithEmailAndPassword(email.trim(),senha);
+      onSuccess();
+    }catch(err){
+      const msgs={
+        "auth/invalid-email":"E-mail inválido.",
+        "auth/user-not-found":"Usuário não encontrado.",
+        "auth/wrong-password":"Senha incorreta.",
+        "auth/invalid-credential":"E-mail ou senha incorretos.",
+        "auth/too-many-requests":"Muitas tentativas. Aguarde um pouco e tente novamente.",
+      };
+      setErro(msgs[err.code]||"Erro ao entrar: "+err.message);
+    }
+    setLoading(false);
+  };
+
+  return <div style={{minHeight:"100vh",background:T.navy,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div style={{width:"100%",maxWidth:380}}>
+      <div style={{textAlign:"center",marginBottom:28}}>
+        <div style={{fontSize:40,marginBottom:8}}>⚓</div>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:24,fontWeight:800,color:T.goldL}}>NAUTICOS</div>
+        <div style={{fontSize:11,color:T.muted,letterSpacing:2,marginTop:2,textTransform:"uppercase"}}>Volvo Penta CRM</div>
+      </div>
+      <form onSubmit={entrar} style={{background:T.card,borderRadius:12,padding:28,border:`1px solid ${T.steel}22`,display:"flex",flexDirection:"column",gap:16}}>
+        <Inp label="E-mail" type="email" value={email} onChange={setEmail} placeholder="seu@email.com"/>
+        <Inp label="Senha" type="password" value={senha} onChange={setSenha} placeholder="••••••••"/>
+        {erro&&<div style={{background:T.danger+"22",border:`1px solid ${T.danger}44`,borderRadius:8,padding:"9px 13px",fontSize:12,color:T.danger}}>{erro}</div>}
+        <Btn variant="primary" onClick={entrar} disabled={loading} full>{loading?<Spinner size={16}/>:"Entrar"}</Btn>
+      </form>
+      <div style={{textAlign:"center",fontSize:11,color:T.muted,marginTop:16}}>Acesso restrito · NauticOS v2.2</div>
+    </div>
+  </div>;
+}
+
+// ── APP ROOT ──────────────────────────────────────────────────────────────────
+function App(){
+  const[authChecked,setAuthChecked]=useState(false);
+  const[user,setUser]=useState(null);
+  const[data,setData]=useState({embarcacoes:[],atendimentos:[]});
+  const[loading,setLoading]=useState(true);
+  const[page,setPage]=useState("dashboard");
+  const[focusId,setFocusId]=useState(null);
+  const[toast,setToast]=useState("");
+  const unsubRef=useRef([]);
+
+  const showToast=(msg,ms=4000)=>{setToast(msg);setTimeout(()=>setToast(""),ms);};
+  const nav=(p,id=null)=>{setPage(p);setFocusId(id);};
+
+  // Observa estado de autenticação
+  useEffect(()=>{
+    let unsub;
+    (async()=>{
+      await fbReady();
+      unsub=window.__FB.auth.onAuthStateChanged(u=>{
+        setUser(u);
+        setAuthChecked(true);
+      });
+    })();
+    return()=>{unsub&&unsub();};
+  },[]);
+
+  const logout=async()=>{
+    await fbReady();
+    await window.__FB.auth.signOut();
+  };
+
+  // Carrega dados do Firebase em tempo real (só após login)
+  useEffect(()=>{
+    if(!user)return;
+    let mounted=true;
+    (async()=>{
+      try{
+        const u1=await fbSubscribe("embarcacoes",embs=>{if(mounted)setData(d=>({...d,embarcacoes:embs}));});
+        const u2=await fbSubscribe("atendimentos",atends=>{if(mounted)setData(d=>({...d,atendimentos:atends}));});
+        unsubRef.current=[u1,u2];
+      }catch(e){showToast("⚠️ Erro ao conectar ao Firebase: "+e.message);}
+      if(mounted)setLoading(false);
+    })();
+    return()=>{mounted=false;unsubRef.current.forEach(u=>u&&u());};
+  },[user]);
+
+  const navItems=[{id:"dashboard",label:"Painel",icon:"⚓"},{id:"embarcacoes",label:"Embarcações",icon:"🚢"},{id:"atendimentos",label:"Atendimentos",icon:"🔧"},{id:"ia",label:"Assistente IA",icon:"🤖"}];
+
+  if(!authChecked)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:T.navy,gap:16}}>
+    <div style={{fontSize:40}}>⚓</div>
+    <Spinner size={36}/>
+  </div>;
+
+  if(!user)return <Login onSuccess={()=>{}}/>;
+
+  if(loading)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:T.navy,gap:16}}>
+    <div style={{fontSize:40}}>⚓</div>
+    <Spinner size={36}/>
+    <div style={{color:T.muted,fontSize:14}}>Conectando ao Firebase…</div>
+  </div>;
+
+  return <div style={{minHeight:"100vh",background:T.navy,fontFamily:"'Barlow','Segoe UI',sans-serif",color:T.text}}>
+    {toast&&<div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:3000,background:toast.startsWith("✅")?T.success:toast.startsWith("🗑️")?T.steel:T.danger,color:"#fff",borderRadius:10,padding:"11px 22px",fontSize:13,fontWeight:600,boxShadow:"0 8px 32px #00000066",maxWidth:480,textAlign:"center",animation:"fadeIn .2s",whiteSpace:"nowrap"}}>{toast}</div>}
+    {/* Sidebar */}
+    <div className="sidebar" style={{position:"fixed",left:0,top:0,bottom:0,width:200,background:T.surface,borderRight:`1px solid ${T.steel}18`,display:"flex",flexDirection:"column",zIndex:100}}>
+      <div style={{padding:"18px 16px 14px",borderBottom:`1px solid ${T.steel}18`}}>
+        <div className="logo-text" style={{fontFamily:"'Playfair Display',serif",fontSize:15,fontWeight:800,color:T.goldL}}>NAUTICOS</div>
+        <div className="logo-text" style={{fontSize:9,color:T.muted,letterSpacing:2,marginTop:1,textTransform:"uppercase"}}>Volvo Penta CRM</div>
+      </div>
+      <nav style={{flex:1,padding:"10px 8px"}}>
+        {navItems.map(n=><button key={n.id} onClick={()=>nav(n.id)} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,border:"none",cursor:"pointer",background:page===n.id?T.blueA+"22":"transparent",color:page===n.id?T.blueA:T.muted,fontFamily:"inherit",fontWeight:page===n.id?700:500,fontSize:13,textAlign:"left",marginBottom:2,transition:"all .15s"}}>
+          <span style={{fontSize:17}}>{n.icon}</span><span className="nav-label">{n.label}</span>
+        </button>)}
+      </nav>
+      <div style={{padding:"10px 8px 14px",borderTop:`1px solid ${T.steel}18`}}>
+        <div className="bk-label" style={{fontSize:10,color:T.muted,textTransform:"uppercase",letterSpacing:1,padding:"4px 8px 6px"}}>Conta</div>
+        <div className="bk-label" style={{fontSize:11,color:T.text,padding:"0 8px 8px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={user.email}>{user.email}</div>
+        <button onClick={logout} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:`1px solid ${T.steel}33`,background:"transparent",color:T.steel,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,marginBottom:8}}>
+          🚪 <span className="bk-label">Sair</span>
+        </button>
+        <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:T.success+"18",border:`1px solid ${T.success}33`,marginBottom:8}}>
+          <div style={{width:7,height:7,borderRadius:"50%",background:T.success,flexShrink:0}}/>
+          <span className="bk-label" style={{fontSize:11,color:T.success,fontWeight:600}}>Conectado · Nuvem</span>
+        </div>
+        <div style={{fontSize:9,color:T.muted,textAlign:"center",paddingTop:4}}>v2.2 · {data.embarcacoes.length} emb · {data.atendimentos.length} atend</div>
+      </div>
+    </div>
+    {/* Main */}
+    <main className="main-content" style={{marginLeft:200,minHeight:"100vh"}}>
+      {page==="dashboard"&&<Dashboard data={data} onNav={nav}/>}
+      {page==="embarcacoes"&&<Embarcacoes data={data} setData={setData} focusId={focusId} showToast={showToast}/>}
+      {page==="atendimentos"&&<Atendimentos data={data} setData={setData} showToast={showToast}/>}
+      {page==="ia"&&<AssistenteIA data={data}/>}
+    </main>
+  </div>;
+}
+
+try {
+  ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+} catch (err) {
+  var box=document.getElementById("boot-error");
+  var msg=document.getElementById("boot-error-msg");
+  if(box&&msg){ box.style.display="block"; msg.textContent += "Erro ao renderizar App: " + err.message + "\n" + (err.stack||"") + "\n\n"; }
+}
+</script>
+<script>
+(function(){
+  function showBootError(text){
+    var box=document.getElementById("boot-error");
+    var msg=document.getElementById("boot-error-msg");
+    if(box&&msg){ box.style.display="block"; msg.textContent += text + "\n\n"; }
+  }
+  try{
+    var sourceEl = document.getElementById("app-source");
+    var rawCode = sourceEl.textContent;
+    var compiled = Babel.transform(rawCode, { presets: [["react", { runtime: "classic" }]] }).code;
+    var scriptEl = document.createElement("script");
+    scriptEl.textContent = compiled;
+    document.body.appendChild(scriptEl);
+  }catch(err){
+    showBootError("Erro ao compilar/executar o app: " + (err.message||err) + "\n" + (err.stack||""));
+  }
+})();
+</script>
+</body>
+</html>
